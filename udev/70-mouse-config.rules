@@ -1,0 +1,4 @@
+# Ardor Gaming Phantom Pro V2 (Compx): the dongle (3554:f52d) and the mouse on its cable (3554:f52e).
+# Gives the logged-in user access to the vendor configuration channel (USB interface 1) only; the keyboard
+# and mouse interfaces stay root-only.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3554", ATTRS{idProduct}=="f52d|f52e", ENV{ID_USB_INTERFACE_NUM}=="01", TAG+="uaccess"

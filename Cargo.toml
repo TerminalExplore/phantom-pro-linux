@@ -1,0 +1,42 @@
+[package]
+name = "mouse-config"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+description = "Unofficial Linux tool for the Ardor Gaming Phantom Pro V2 mouse: DPI, buttons, macros, lighting"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/TerminalExplore/phantom-pro-linux"
+readme = "README.md"
+keywords = ["mouse", "hid", "hidraw", "linux", "gpui"]
+categories = ["hardware-support", "command-line-utilities"]
+authors = ["TerminalExplore"]
+publish = false
+
+[lib]
+name = "mouse_config"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mouse-config"
+path = "src/main.rs"
+
+[[bin]]
+name = "mouse-config-gui"
+path = "src/gui.rs"
+required-features = ["gui"]
+
+[features]
+gui = ["dep:gpui"]
+
+[dependencies]
+libc = "0.2"
+gpui = { version = "0.2.2", optional = true }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+
+# gpui -> zed-async-tar -> xattr 0.2.3 uses libc::ENOATTR, which libc no longer has on Linux
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }
