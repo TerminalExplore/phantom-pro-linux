@@ -10,6 +10,12 @@ program: DPI stages and colours, report rate, button assignment, macros, lightin
 
 [Русская версия ниже](#по-русски).
 
+| Sensor | Buttons | Lighting |
+|---|---|---|
+| ![DPI stages, report rate, sensor switches](docs/screenshots/sensor.png) | ![Key assignment](docs/screenshots/buttons.png) | ![Body light](docs/screenshots/light.png) |
+
+*Screenshots show the built-in style in demo mode (`MOUSE_CONFIG_DEMO=1`), not a real mouse.*
+
 ## What works
 
 | Feature | CLI | GUI | Hardware-tested |
@@ -45,10 +51,13 @@ sudo apt install libxkbcommon-x11-dev libx11-xcb-dev libwayland-dev libvulkan-de
 scripts/install.sh        # builds with --features gui, links ~/.local/bin, adds a desktop entry
 ```
 
-The GUI is laid out like the vendor window and can show the vendor's artwork. That artwork belongs to Ardor
-and is **not** in this repository. If you have the vendor installer, extract it
-(`innoextract -e <setup.exe>`) and run `scripts/install-assets.sh <extracted>/app/res`; the images are copied
-to `~/.local/share/mouse-config/assets`. Without them the GUI works with plain backgrounds.
+The GUI follows the layout of the vendor's window, with its own built-in style. If you also have the vendor
+artwork it can use it instead; that artwork belongs to Ardor and is **not** in this repository. Extract the vendor
+installer (`innoextract -e <setup.exe>`), run `scripts/install-assets.sh <extracted>/app/res`, and the images are
+copied to `~/.local/share/mouse-config/assets`. `MOUSE_CONFIG_SKIN=builtin` forces the built-in style even then.
+
+`MOUSE_CONFIG_DEMO=1 mouse-config-gui` opens the window with typical settings and writes nothing, which is handy
+for trying the interface or developing without the mouse.
 
 ## Use
 

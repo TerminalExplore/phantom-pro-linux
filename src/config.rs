@@ -32,6 +32,15 @@ pub const KEY_COUNT: usize = 16;
 /// DPI codes above this need the DPIex byte, whose bit layout is not known yet.
 pub const MAX_DPI: u32 = 12800;
 
+/// Settings bytes read from a real mouse with the factory configuration (used by the tests and the GUI demo).
+pub const SAMPLE_IMAGE: &str = "01 54 06 4f 02 53 00 55 00 55 01 54 07 07 00 47 0f 0f 00 37 1f 1f 00 17 2f 2f 00 f7 3f 3f 00 d7 7f 7f 00 57 7f 7f 00 57 7f 7f 00 57 ff 00 00 56 00 00 ff 56 00 ff 00 56 ff ff 00 57 00 ff ff 57 ff 00 ff 57 ff 00 ff 57 ff 00 ff 57 02 53 80 d5 03 52 01 54 ff 00 ff 57 00 55 80 d5 03 52 00 55 01 01 00 53 01 02 00 52 01 04 00 50 01 08 00 4c 01 10 00 44 02 01 00 52 00 00 00 55 00 00 00 55 07 00 00 4e 02 02 00 51 02 03 00 50 04 0a 03 44 00 00 00 55 00 00 00 55 00 00 00 55 00 00 00 55 01 ff 00 ff 07 09 46 01 54 04 51 01 54 06 4f 00 55 00 55 01 54 00 55 06 4f 01 54 0a 4b";
+
+pub fn sample_image() -> Vec<u8> {
+    let mut img: Vec<u8> = SAMPLE_IMAGE.split(' ').map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
+    img.resize(IMAGE_LEN, 0xff);
+    img
+}
+
 pub struct Patch {
     pub addr: usize,
     pub bytes: Vec<u8>,
@@ -381,13 +390,8 @@ pub fn set_debounce(ms: u8) -> Result<Patch, String> {
 mod tests {
     use super::*;
 
-    // bytes read from a real mouse on 2026-11-17
-    const LIVE: &str = "01 54 06 4f 02 53 00 55 00 55 01 54 07 07 00 47 0f 0f 00 37 1f 1f 00 17 2f 2f 00 f7 3f 3f 00 d7 7f 7f 00 57 7f 7f 00 57 7f 7f 00 57 ff 00 00 56 00 00 ff 56 00 ff 00 56 ff ff 00 57 00 ff ff 57 ff 00 ff 57 ff 00 ff 57 ff 00 ff 57 02 53 80 d5 03 52 01 54 ff 00 ff 57 00 55 80 d5 03 52 00 55 01 01 00 53 01 02 00 52 01 04 00 50 01 08 00 4c 01 10 00 44 02 01 00 52 00 00 00 55 00 00 00 55 07 00 00 4e 02 02 00 51 02 03 00 50 04 0a 03 44 00 00 00 55 00 00 00 55 00 00 00 55 00 00 00 55 01 ff 00 ff 07 09 46 01 54 04 51 01 54 06 4f 00 55 00 55 01 54 00 55 06 4f 01 54 0a 4b";
-
     fn live() -> Vec<u8> {
-        let mut img: Vec<u8> = LIVE.split(' ').map(|b| u8::from_str_radix(b, 16).unwrap()).collect();
-        img.resize(IMAGE_LEN, 0xff);
-        img
+        sample_image()
     }
 
     #[test]

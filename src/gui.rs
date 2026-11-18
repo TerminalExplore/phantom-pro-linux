@@ -94,6 +94,11 @@ const TABS: [&str; 5] = ["Кнопки", "Сенсор", "Макросы", "По
 /// One conversation with the device at a time: the poll and the writes share the dongle's reply stream.
 static DEVICE: Mutex<()> = Mutex::new(());
 
+/// The vendor artwork is used when it is installed; `MOUSE_CONFIG_SKIN=builtin` forces the built-in style.
+fn vendor_art() -> bool {
+    std::env::var("MOUSE_CONFIG_SKIN").map_or(true, |v| v != "builtin") && assets_dir().join("bg.png").exists()
+}
+
 fn assets_dir() -> PathBuf {
     let base = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -130,7 +135,21 @@ struct Snapshot {
     battery: Option<Battery>,
 }
 
+/// `MOUSE_CONFIG_DEMO=1`: show typical settings and write nothing (screenshots, development without the mouse).
+fn demo() -> bool {
+    std::env::var_os("MOUSE_CONFIG_DEMO").is_some()
+}
+
 fn load() -> Result<Snapshot, String> {
+    if demo() {
+        return Ok(Snapshot {
+            img: config::sample_image(),
+            link: Link::Dongle,
+            node: "demo".into(),
+            online: true,
+            battery: Some(Battery { percent: 80, on_cable: false, millivolts: 3980 }),
+        });
+    }
     let _guard = DEVICE.lock().unwrap_or_else(|e| e.into_inner());
     let mut mouse = Mouse::open().map_err(|e| e.to_string())?;
     let online = mouse.online().unwrap_or(false);
@@ -140,6 +159,9 @@ fn load() -> Result<Snapshot, String> {
 }
 
 fn read_slot(slot: usize) -> Result<Option<Macro>, String> {
+    if demo() {
+        return Ok(None);
+    }
     let _guard = DEVICE.lock().unwrap_or_else(|e| e.into_inner());
     let mut mouse = Mouse::open().map_err(|e| e.to_string())?;
     let bytes = mouse.read(macros::slot_addr(slot) as u16, macros::SLOT_LEN).map_err(|e| e.to_string())?;
@@ -147,6 +169,10 @@ fn read_slot(slot: usize) -> Result<Option<Macro>, String> {
 }
 
 fn write(patch: Patch, backup: bool) -> Result<(), String> {
+    if demo() {
+        let _ = (patch, backup);
+        return Ok(());
+    }
     let _guard = DEVICE.lock().unwrap_or_else(|e| e.into_inner());
     let mut mouse = Mouse::open().map_err(|e| e.to_string())?;
     ops::apply(&mut mouse, &Opts { base: 0, force: false, backup }, vec![patch])?;
@@ -159,6 +185,8 @@ struct Canvas {
     k: f32,
     ox: f32,
     oy: f32,
+    /// Draw with the vendor's artwork (installed locally) instead of the built-in style.
+    vendor: bool,
 }
 
 impl Canvas {
@@ -184,7 +212,7 @@ impl Canvas {
     /// A vendor image, or nothing when the artwork is not installed.
     fn pic(&self, name: &str, x: f32, y: f32, w: f32, h: f32) -> AnyElement {
         let path = assets_dir().join(name);
-        if !path.exists() {
+        if !self.vendor || !path.exists() {
             return div().into_any_element();
         }
         self.at(x, y, w, h).child(img(path).w(self.px(w)).h(self.px(h)).object_fit(ObjectFit::Fill)).into_any_element()
@@ -194,6 +222,9 @@ impl Canvas {
     /// hover) differ in size on purpose, so they must not be stretched to one rectangle.
     fn pic_nat(&self, name: &str, x: f32, y: f32, w: f32, h: f32) -> AnyElement {
         let path = assets_dir().join(name);
+        if !self.vendor {
+            return div().into_any_element();
+        }
         let Some((nw, nh)) = png_size(&path) else { return div().into_any_element() };
         self.pic(name, x + (w - nw) / 2.0, y + (h - nh) / 2.0, nw, nh)
     }
@@ -328,7 +359,7 @@ impl Gui {
             mods: Modifiers::default(),
             last_event: None,
             focus: cx.focus_handle(),
-            canvas: Canvas { k: 1.0, ox: 0.0, oy: 0.0 },
+            canvas: Canvas { k: 1.0, ox: 0.0, oy: 0.0, vendor: false },
             _poll: poll,
         }
     }
@@ -615,6 +646,67 @@ fn rgb_of(c: [u8; 3]) -> u32 {
     ((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32
 }
 
+/// Key button positions on the built-in mouse drawing (top-left of the 38 px circle, relative to the 432x356
+/// panel); the six physical keys sit on the drawing, the service slots 7..16 in two columns beside it.
+fn key_spot(vendor: bool, i: usize) -> (f32, f32) {
+    if vendor {
+        return KEY_SPOTS[i];
+    }
+    const OWN: [(f32, f32); PHYSICAL_KEYS] =
+        [(157.0, 75.0), (237.0, 75.0), (197.0, 75.0), (103.0, 240.0), (103.0, 190.0), (197.0, 140.0)];
+    if i < PHYSICAL_KEYS {
+        OWN[i]
+    } else {
+        let (col, row) = ((i - PHYSICAL_KEYS) / 5, (i - PHYSICAL_KEYS) % 5);
+        (330.0 + 44.0 * col as f32, 20.0 + 60.0 * row as f32)
+    }
+}
+
+/// A simple top-down mouse drawing (the built-in replacement for the vendor photo), `s` times its base size
+/// of 160x300 at (x, y).
+fn mouse_art(c: &Canvas, x: f32, y: f32, s: f32) -> Vec<AnyElement> {
+    let line = 0x3a3a3a;
+    vec![
+        c.at(x, y, 160.0 * s, 300.0 * s)
+            .rounded(c.px(70.0 * s))
+            .bg(rgb(0x1d1d1d))
+            .border_2()
+            .border_color(rgb(line))
+            .into_any_element(),
+        // buttons: seam between left and right, and the line they end at
+        c.at(x + 79.0 * s, y + 4.0 * s, 2.0 * s, 124.0 * s).bg(rgb(line)).into_any_element(),
+        c.at(x + 14.0 * s, y + 128.0 * s, 132.0 * s, 2.0 * s).bg(rgb(line)).into_any_element(),
+        // wheel and DPI button
+        c.at(x + 70.0 * s, y + 24.0 * s, 20.0 * s, 48.0 * s)
+            .rounded(c.px(8.0 * s))
+            .bg(rgb(0x2c2c2c))
+            .border_1()
+            .border_color(rgb(RED))
+            .into_any_element(),
+        c.at(x + 69.0 * s, y + 132.0 * s, 22.0 * s, 12.0 * s)
+            .rounded(c.px(5.0 * s))
+            .bg(rgb(0x2c2c2c))
+            .border_1()
+            .border_color(rgb(line))
+            .into_any_element(),
+        // side buttons on the left edge
+        c.at(x - 8.0 * s, y + 166.0 * s, 10.0 * s, 34.0 * s)
+            .rounded(c.px(4.0 * s))
+            .bg(rgb(0x2c2c2c))
+            .border_1()
+            .border_color(rgb(line))
+            .into_any_element(),
+        c.at(x - 8.0 * s, y + 216.0 * s, 10.0 * s, 34.0 * s)
+            .rounded(c.px(4.0 * s))
+            .bg(rgb(0x2c2c2c))
+            .border_1()
+            .border_color(rgb(line))
+            .into_any_element(),
+        // the logo light at the back
+        c.at(x + 60.0 * s, y + 262.0 * s, 40.0 * s, 4.0 * s).rounded(c.px(2.0 * s)).bg(rgb(RED)).into_any_element(),
+    ]
+}
+
 /// The vendor's flat button: a bordered box, red when active.
 #[allow(clippy::too_many_arguments)]
 fn flat(
@@ -647,6 +739,10 @@ impl Gui {
     fn chrome(&self, c: &Canvas, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out: Vec<AnyElement> = vec![c.pic("bg.png", 0.0, 0.0, SCENE_W, SCENE_H)];
         out.push(c.text("Phantom Pro V2", 221.0, 21.0, 300.0, 28.0, 18.0, TEXT).into_any_element());
+        if !c.vendor {
+            out.push(c.text("PHANTOM PRO", 24.0, 22.0, 180.0, 34.0, 24.0, TEXT).into_any_element());
+            out.push(c.at(24.0, 58.0, 150.0, 3.0).bg(rgb(RED)).into_any_element());
+        }
 
         // navigation strip: the default sprite with the selected segment overlaid
         out.push(c.pic("nav.png", 218.0, 64.0, 382.0, 26.0));
@@ -654,7 +750,7 @@ impl Gui {
         let nav_on = assets_dir().join("nav_on.png");
         for (i, tab_label) in TABS.iter().enumerate() {
             let selected = !self.home && self.tab == i;
-            if selected && nav_on.exists() {
+            if selected && c.vendor && nav_on.exists() {
                 out.push(
                     c.at(218.0 + seg * i as f32, 64.0, seg, 26.0)
                         .overflow_hidden()
@@ -669,6 +765,28 @@ impl Gui {
                         .into_any_element(),
                 );
             }
+            if !c.vendor {
+                let x = 218.0 + seg * i as f32;
+                out.push(
+                    c.text(*tab_label, x, 64.0, seg, 26.0, 12.5, if selected { RED } else { TEXT })
+                        .justify_center()
+                        .into_any_element(),
+                );
+                if selected {
+                    out.push(c.at(x + 10.0, 90.0, seg - 20.0, 2.0).bg(rgb(RED)).into_any_element());
+                }
+            }
+            if selected && c.vendor {
+                out.push(
+                    c.text(*tab_label, 218.0 + seg * i as f32, 92.0, seg, 18.0, 12.0, RED)
+                        .justify_center()
+                        .into_any_element(),
+                );
+            }
+        }
+
+        // click areas come last so that nothing drawn above them swallows the clicks
+        for i in 0..TABS.len() {
             out.push(
                 c.at(218.0 + seg * i as f32, 64.0, seg, 26.0)
                     .id(("tab", i))
@@ -683,13 +801,6 @@ impl Gui {
                     }))
                     .into_any_element(),
             );
-            if selected {
-                out.push(
-                    c.text(*tab_label, 218.0 + seg * i as f32, 92.0, seg, 18.0, 12.0, RED)
-                        .justify_center()
-                        .into_any_element(),
-                );
-            }
         }
 
         // home and "system mouse" buttons on the left edge
@@ -710,7 +821,18 @@ impl Gui {
                         .justify_end()
                         .into_any_element(),
                 );
-                out.push(c.pic("battery_empty.png", 950.0, 64.0, 42.0, 20.0));
+                if c.vendor {
+                    out.push(c.pic("battery_empty.png", 950.0, 64.0, 42.0, 20.0));
+                } else {
+                    out.push(
+                        c.at(950.0, 64.0, 40.0, 20.0)
+                            .rounded(c.px(3.0))
+                            .border_2()
+                            .border_color(rgb(TEXT))
+                            .into_any_element(),
+                    );
+                    out.push(c.at(991.0, 69.0, 3.0, 10.0).rounded(c.px(1.0)).bg(rgb(TEXT)).into_any_element());
+                }
                 let color = if b.on_cable {
                     WARN
                 } else if b.percent <= 20 {
@@ -768,8 +890,12 @@ impl Gui {
         // the mouse photo and its 16 key buttons
         let (mx, my) = (px0 + 182.0, py0 + 6.0);
         out.push(c.pic("mouse.png", mx, my, 432.0, 356.0));
+        if !c.vendor {
+            out.extend(mouse_art(c, mx + 136.0, my + 24.0, 1.0));
+        }
         let visible = if self.show_extra { config::KEY_COUNT } else { PHYSICAL_KEYS };
-        for (i, (x, y)) in KEY_SPOTS.iter().enumerate().take(visible) {
+        for i in 0..visible {
+            let (x, y) = key_spot(c.vendor, i);
             let selected = i == self.key;
             let extra = i >= PHYSICAL_KEYS;
             let name = if selected { "key_down.png" } else { "key.png" };
@@ -777,7 +903,15 @@ impl Gui {
             out.push(
                 c.at(mx + x, my + y, 38.0, 38.0)
                     .opacity(if extra && !selected { 0.45 } else { 1.0 })
-                    .child(c.pic_nat(name, 0.0, 0.0, 38.0, 38.0))
+                    .child(if c.vendor {
+                        c.pic_nat(name, 0.0, 0.0, 38.0, 38.0)
+                    } else {
+                        let d = if selected { 38.0 } else { 30.0 };
+                        c.at((38.0 - d) / 2.0, (38.0 - d) / 2.0, d, d)
+                            .rounded_full()
+                            .bg(rgb(if selected { RED } else { 0xc40000 }))
+                            .into_any_element()
+                    })
                     .into_any_element(),
             );
             out.push(
@@ -816,6 +950,12 @@ impl Gui {
         // function panel
         let (fx, fy) = (px0 + 2.0, py0 + 360.0);
         out.push(c.pic("panel.png", fx, fy, 862.0, 216.0));
+        if !c.vendor {
+            out.push(
+                c.at(fx, fy, 862.0, 216.0).rounded(c.px(4.0)).border_1().border_color(rgb(LINE)).into_any_element(),
+            );
+            out.push(c.at(fx + 637.0, fy, 1.0, 216.0).bg(rgb(LINE)).into_any_element());
+        }
         let current = cfg.keys[self.key];
         out.push(
             c.text(format!("Кнопка {}", self.key + 1), fx + 24.0, fy + 14.0, 300.0, 24.0, 15.0, TEXT)
@@ -872,6 +1012,18 @@ impl Gui {
             let color = cfg.colors[i];
             let dpi = config::code_to_dpi(cfg.dpi[i].0 as u8);
             out.push(c.pic_nat(if selected { "dpi_on.png" } else { "dpi_off.png" }, x, y, 68.0, 70.0));
+            if !c.vendor {
+                let (w, h, border) = if selected { (68.0, 70.0, 0xffffff) } else { (54.0, 56.0, LINE) };
+                out.push(
+                    c.at(x + (68.0 - w) / 2.0, y + (70.0 - h) / 2.0, w, h)
+                        .rounded(c.px(6.0))
+                        .bg(rgb(0x161616))
+                        .border_2()
+                        .border_color(rgb(border))
+                        .opacity(if active { 1.0 } else { 0.35 })
+                        .into_any_element(),
+                );
+            }
             out.push(
                 c.at(x, y, 68.0, 70.0)
                     .id(("stage", i))
@@ -913,13 +1065,11 @@ impl Gui {
                     .id(("current", i))
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| this.mutate(config::set_current(i + 1), cx)))
-                    .child(c.pic_nat(
-                        if is_current { "dpi_cur_hover.png" } else { "dpi_cur.png" },
-                        0.0,
-                        0.0,
-                        24.0,
-                        20.0,
-                    ))
+                    .child(if c.vendor {
+                        c.pic_nat(if is_current { "dpi_cur_hover.png" } else { "dpi_cur.png" }, 0.0, 0.0, 24.0, 20.0)
+                    } else {
+                        c.text("▲", 0.0, 0.0, 24.0, 20.0, 14.0, RED).justify_center().into_any_element()
+                    })
                     .opacity(if is_current { 1.0 } else { 0.25 })
                     .into_any_element(),
             );
@@ -1194,6 +1344,17 @@ impl Gui {
         let (cx0, cy0) = (px0 + 411.0, py0 + 44.0);
         out.push(c.text("Цвет подсветки", cx0 + 3.0, cy0 + 22.0, 200.0, 24.0, 14.0, TEXT).into_any_element());
         out.push(c.pic("color_bar.png", cx0 + 8.0, cy0 + 62.0, 308.0, 34.0));
+        if !c.vendor {
+            for n in 0..6 {
+                let (f0, f1) = (n as f32 / 6.0, (n + 1) as f32 / 6.0);
+                let (a, b) = (rgb_of(hue_to_rgb(f0)), rgb_of(hue_to_rgb(f1)));
+                out.push(
+                    c.at(cx0 + 8.0 + 308.0 * f0, cy0 + 62.0, 308.0 / 6.0 + 0.5, 34.0)
+                        .bg(linear_gradient(90., linear_color_stop(rgb(a), 0.0), linear_color_stop(rgb(b), 1.0)))
+                        .into_any_element(),
+                );
+            }
+        }
         out.push(
             c.at(cx0 + 8.0, cy0 + 56.0, 308.0, 46.0)
                 .id("light-hue")
@@ -1591,6 +1752,18 @@ impl Gui {
         let online = self.snap.as_ref().is_some_and(|s| s.online || s.link == Link::Wired);
         let (x, y) = (410.0, 220.0);
         out.push(c.pic(if online { "home_on.png" } else { "home_off.png" }, x, y, 200.0, 253.0));
+        if !c.vendor {
+            out.push(
+                c.at(x, y, 200.0, 253.0)
+                    .rounded(c.px(8.0))
+                    .bg(rgb(0x161616))
+                    .border_1()
+                    .border_color(rgb(if online { 0xaaaaaa } else { LINE }))
+                    .opacity(if online { 1.0 } else { 0.5 })
+                    .into_any_element(),
+            );
+            out.extend(mouse_art(c, x + 60.0, y + 40.0, 0.55));
+        }
         out.push(
             c.at(x, y, 200.0, 253.0)
                 .id("home-card")
@@ -1610,6 +1783,10 @@ impl Gui {
                 34.0,
                 40.0,
             ));
+            if !c.vendor {
+                let (label, color) = if s.link == Link::Wired { ("USB", OK) } else { ("2.4G", WARN) };
+                out.push(c.text(label, x + 10.0, y + 8.0, 60.0, 20.0, 12.0, color).into_any_element());
+            }
         }
         out.push(c.text("Phantom Pro V2", x, y + 262.0, 200.0, 24.0, 15.0, TEXT).justify_center().into_any_element());
         out.push(
@@ -1639,7 +1816,7 @@ impl Render for Gui {
         let vp = window.viewport_size();
         let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
         let k = (vw / SCENE_W).min(vh / SCENE_H).max(0.2);
-        let c = Canvas { k, ox: (vw - SCENE_W * k) / 2.0, oy: 0.0 };
+        let c = Canvas { k, ox: (vw - SCENE_W * k) / 2.0, oy: 0.0, vendor: vendor_art() };
         self.canvas = c;
 
         let mut scene = div().absolute().left(px(c.ox)).top(px(c.oy)).w(c.px(SCENE_W)).h(c.px(SCENE_H));

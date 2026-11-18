@@ -27,6 +27,7 @@ usage: mouse-config [--base ADDR] [--force] <command>
   macro set KEY NAME SCRIPT [REPEAT]
                               store a macro and point the key at it; script words: tap:K down:K up:K
                               click:left|right|middle|back|forward wait:MS (K: a-z 0-9 f1-f12 enter esc tab space ...)
+  macro store KEY NAME SCRIPT store a macro in the key's slot WITHOUT changing what the key does
   macro clear KEY             switch the key off (the mouse refuses to erase a stored macro, it can only be replaced)
   set motion-sync|angle-snap|ripple|leds-off-moving on|off
   set light-mode N            body light: 0 off, 1 rainbow, 2 one colour, 3 fixed rainbow, 4 neon, 5 breathing rainbow, 6 colourful
@@ -163,6 +164,15 @@ fn macro_cmd(mouse: &mut Mouse, o: &Opts, a: &[String]) -> Result<(), String> {
             save_backup(&path, macros::slot_addr(key) as u16, &old).map_err(|e| e.to_string())?;
             println!("old slot saved to {}", path.display());
             apply(mouse, o, patches)?;
+        }
+        "store" => {
+            let key = macro_key(a, 1)?;
+            let m = macros::parse_script(need(a, 2, "name")?, need(a, 3, "script")?)?;
+            let old = read_slot(mouse, key)?;
+            let path = config_dir().join(format!("macro-slot{}-{}.txt", key + 1, stamp()));
+            save_backup(&path, macros::slot_addr(key) as u16, &old).map_err(|e| e.to_string())?;
+            println!("old slot saved to {}", path.display());
+            apply(mouse, o, vec![Patch { addr: macros::slot_addr(key), bytes: m.encode()? }])?;
         }
         "clear" => {
             let key = macro_key(a, 1)?;
